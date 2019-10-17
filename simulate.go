@@ -1,9 +1,16 @@
 package main
 
 import (
-	"log"
 	"flag"
+	"fmt"
+	"log"
+	"math"
 	"math/rand"
+
+	"gonum.org/v1/plot"
+	"gonum.org/v1/plot/plotter"
+	"gonum.org/v1/plot/plotutil"
+	"gonum.org/v1/plot/vg"
 )
 
 /*
@@ -16,7 +23,7 @@ import (
 		- Sink: Pays lab for tests
 
 	Agent
-		- Source: Buy's padcoin to get cards 
+		- Source: Buy's padcoin to get cards
 		- Sink: Buying cards
 
 	Lab
@@ -30,7 +37,7 @@ import (
 	Exchange
 		- Source: People selling coins
 		- Sink: People buying with real money
-	
+
 	Miner
 		- Source: Minting blocks
 		- Sink: Selling coins
@@ -39,9 +46,9 @@ import (
 var verbose bool
 
 type Transaction struct {
-	From *Actor
-	To *Actor
-	Type string
+	From   *Actor
+	To     *Actor
+	Type   string
 	Amount float64
 }
 
@@ -49,6 +56,7 @@ var queue []Transaction
 
 // Actor Interface
 var actors []Actor
+
 type Actor interface {
 	Step(index int64)
 }
@@ -59,26 +67,27 @@ const CARD_TAX = 0.95
 const CARD_MANUFACTURERS = 10
 
 var cManufacturer [CARD_MANUFACTURERS]CardManufacturer
+
 type CardManufacturer struct {
-	Wallet float64
+	Wallet   float64
 	TaxCount int
 }
 
-func (m *CardManufacturer) Step(index int64){
+func (m *CardManufacturer) Step(index int64) {
 	var self Actor = m
 	if m.TaxCount > 0 && m.Wallet < CARD_TAX {
 		log.Println("Card Manufacturer Exhausted")
 	}
 	if m.Wallet > CARD_TAX && m.TaxCount > 0 {
 		var other Actor = &goverment
-		queue = append(queue, Transaction{From:&self, To:&other, Type:"CARDTAX", Amount:CARD_TAX})
+		queue = append(queue, Transaction{From: &self, To: &other, Type: "CARDTAX", Amount: CARD_TAX})
 		m.Wallet -= CARD_TAX
 		m.TaxCount--
 	}
-	if m.Wallet > CARD_TAX * 100 {
+	if m.Wallet > CARD_TAX*100 {
 		var other Actor = &exchange
-		queue = append(queue, Transaction{From:&self, To:&other, Type:"COINSELL", Amount:CARD_TAX*10})
-		m.Wallet -= CARD_TAX*10
+		queue = append(queue, Transaction{From: &self, To: &other, Type: "COINSELL", Amount: CARD_TAX * 10})
+		m.Wallet -= CARD_TAX * 10
 	}
 }
 
@@ -87,18 +96,19 @@ const DRUG_MANUFACTURERS = 10
 const TEST_COST = 2.5
 
 var dManufacturer [CARD_MANUFACTURERS]DrugManufacturer
+
 type DrugManufacturer struct {
-	Wallet float64
+	Wallet     float64
 	LabRequest []*Actor
 }
 
-func (m *DrugManufacturer) Step(index int64){
+func (m *DrugManufacturer) Step(index int64) {
 	var self Actor = m
 	if len(m.LabRequest) > 0 && m.Wallet < TEST_COST {
 		log.Println("Drug Manufacturer Exhausted")
 	}
 	if m.Wallet > TEST_COST && len(m.LabRequest) > 0 {
-		queue = append(queue, Transaction{From:&self, To:m.LabRequest[0], Type:"LABFEE", Amount:TEST_COST})
+		queue = append(queue, Transaction{From: &self, To: m.LabRequest[0], Type: "LABFEE", Amount: TEST_COST})
 		m.Wallet -= TEST_COST
 		m.LabRequest = m.LabRequest[1:]
 	}
@@ -112,25 +122,27 @@ const FUNDING_AMOUNT = CARD_COST
 const DAYS_BETWEEN_FUNDING = 30
 
 var agents [AGENTS]Agent
+
 type Agent struct {
 	Wallet float64
-	Cards int
+	Cards  int
 }
 
 var cardsBought = 0
 var fakesFound = 0
-func (a *Agent) Step(index int64){
+
+func (a *Agent) Step(index int64) {
 	var self Actor = a
-	if a.Wallet < CARD_COST && index % DAYS_BETWEEN_FUNDING == 0{
+	if a.Wallet < CARD_COST && index%DAYS_BETWEEN_FUNDING == 0 {
 		var other Actor = &exchange
-		queue = append(queue, Transaction{From:&self, To:&other, Type:"COINBUY", Amount:FUNDING_AMOUNT})
+		queue = append(queue, Transaction{From: &self, To: &other, Type: "COINBUY", Amount: FUNDING_AMOUNT})
 	}
 
 	if a.Cards == 0 && a.Wallet > CARD_COST {
 		selected := rand.Intn(CARD_MANUFACTURERS)
 		var manufacturer Actor = &cManufacturer[selected]
 
-		queue = append(queue, Transaction{From:&self, To:&manufacturer, Type:"CARDBUY", Amount:CARD_COST})
+		queue = append(queue, Transaction{From: &self, To: &manufacturer, Type: "CARDBUY", Amount: CARD_COST})
 		cardsBought++
 		a.Wallet -= CARD_COST
 	}
@@ -140,7 +152,7 @@ func (a *Agent) Step(index int64){
 		if rand.Float64() < FAKE_DRUG_PERCENTAGE {
 			selected := rand.Intn(LABS)
 			var lab Actor = &labs[selected]
-			queue = append(queue, Transaction{From:&self, To:&lab, Type:"FAKEFOUND", Amount:float64(dSelected)})
+			queue = append(queue, Transaction{From: &self, To: &lab, Type: "FAKEFOUND", Amount: float64(dSelected)})
 			fakesFound++
 			Mine(&self)
 		}
@@ -153,19 +165,21 @@ const LABS = 10
 const AGENT_REWARD = 1.5
 
 var labs [LABS]Lab
+
 type Lab struct {
 	Wallet float64
-	Tests []*Actor
+	Tests  []*Actor
 }
 
-var fakesVerified = 0 
-func (l *Lab) Step(index int64){
+var fakesVerified = 0
+
+func (l *Lab) Step(index int64) {
 	var self Actor = l
 	if len(l.Tests) > 0 && l.Wallet < AGENT_REWARD {
 		log.Println("Lab Exhausted")
 	}
 	if l.Wallet > AGENT_REWARD && len(l.Tests) > 0 {
-		queue = append(queue, Transaction{From:&self, To:l.Tests[0], Type:"FAKECONFIRM", Amount:AGENT_REWARD})
+		queue = append(queue, Transaction{From: &self, To: l.Tests[0], Type: "FAKECONFIRM", Amount: AGENT_REWARD})
 		fakesVerified++
 		l.Wallet -= AGENT_REWARD
 		l.Tests = l.Tests[1:]
@@ -177,41 +191,42 @@ const DRUG_PAYMENT_DAYS = 30
 const DRUG_PAYMENT_RATE = 50
 
 var goverment Government
+
 type Government struct {
 	Wallet float64
 }
 
-func (g *Government) Step(index int64){
-	if index % DRUG_PAYMENT_DAYS == 0 {
+func (g *Government) Step(index int64) {
+	if index%DRUG_PAYMENT_DAYS == 0 {
 		var self Actor = g
 		for i := 0; i < DRUG_MANUFACTURERS; i++ {
 			if g.Wallet > DRUG_PAYMENT_RATE {
 				var tester Actor = &dManufacturer[i]
-				queue = append(queue, Transaction{From:&self, To:&tester, Type:"DRUGPAYMENT", Amount:DRUG_PAYMENT_RATE})
+				queue = append(queue, Transaction{From: &self, To: &tester, Type: "DRUGPAYMENT", Amount: DRUG_PAYMENT_RATE})
 				g.Wallet -= DRUG_PAYMENT_RATE
-			}else{
+			} else {
 				log.Println("Government Exhausted")
 			}
 		}
 	}
 }
 
-
 // Exchange Code
 var exchange Exchange
+
 type Exchange struct {
 	Wallet float64
-	Buys []*Actor
+	Buys   []*Actor
 }
 
-func (e *Exchange) Step(index int64){
+func (e *Exchange) Step(index int64) {
 	var self Actor = e
 	for i := 0; i < len(e.Buys); i++ {
 		if e.Wallet > FUNDING_AMOUNT {
-			queue = append(queue, Transaction{From:&self, To:e.Buys[i], Type:"COINSEND", Amount:FUNDING_AMOUNT})
+			queue = append(queue, Transaction{From: &self, To: e.Buys[i], Type: "COINSEND", Amount: FUNDING_AMOUNT})
 			e.Wallet -= FUNDING_AMOUNT
 			e.Buys = e.Buys[1:]
-		}else{
+		} else {
 			log.Println("Exchange Exhausted")
 		}
 	}
@@ -221,6 +236,7 @@ func (e *Exchange) Step(index int64){
 const MINERS = 10
 const MINING_REWARD = 1
 const TRANSACTIONS_PER_BLOCK = 500
+
 var minedTransactions = 0
 
 func Mine(a *Actor) {
@@ -299,15 +315,16 @@ func Mine(a *Actor) {
 const MINER_SELL_VALUE = 8
 
 var miners [MINERS]Miner
+
 type Miner struct {
 	Wallet float64
 }
 
-func (m *Miner) Step(index int64){
+func (m *Miner) Step(index int64) {
 	var self Actor = m
 	if m.Wallet > MINER_SELL_VALUE {
 		var other Actor = &exchange
-		queue = append(queue, Transaction{From:&self, To:&other, Type:"COINSELL", Amount:MINER_SELL_VALUE})
+		queue = append(queue, Transaction{From: &self, To: &other, Type: "COINSELL", Amount: MINER_SELL_VALUE})
 		m.Wallet -= MINER_SELL_VALUE
 	}
 	Mine(&self)
@@ -333,7 +350,7 @@ func AverageWallet(actors []Actor) (retVal float64) {
 	return retVal / float64(len(actors))
 }
 
-func main(){
+func main() {
 	flag.BoolVar(&verbose, "verbose", false, "")
 	days := flag.Int("days", 10, "Number of days to simulate")
 	flag.Parse()
@@ -341,46 +358,87 @@ func main(){
 	// Initialization
 	goverment.Wallet = DRUG_MANUFACTURERS * DRUG_PAYMENT_RATE * 10
 	actors = append(actors, &goverment)
+	ptsGovernment := make(plotter.XYs, *days)
 
 	exchange.Wallet = 100000000
 	actors = append(actors, &exchange)
+	ptsExchange := make(plotter.XYs, *days)
 
 	var cmSlice []Actor
+	ptsCardManufacturers := make(plotter.XYs, *days)
 	for i := 0; i < CARD_MANUFACTURERS; i++ {
 		cmSlice = append(cmSlice, &cManufacturer[i])
 		actors = append(actors, &cManufacturer[i])
 	}
 
 	var dmSlice []Actor
+	ptsDrugManufacturers := make(plotter.XYs, *days)
 	for i := 0; i < DRUG_MANUFACTURERS; i++ {
 		dmSlice = append(dmSlice, &dManufacturer[i])
 		actors = append(actors, &dManufacturer[i])
 	}
 
 	var aSlice []Actor
+	ptsAgents := make(plotter.XYs, *days)
 	for i := 0; i < AGENTS; i++ {
 		aSlice = append(aSlice, &agents[i])
 		actors = append(actors, &agents[i])
 	}
 
 	var lSlice []Actor
+	ptsLabs := make(plotter.XYs, *days)
 	for i := 0; i < LABS; i++ {
 		lSlice = append(lSlice, &labs[i])
 		actors = append(actors, &labs[i])
 	}
 
 	var mSlice []Actor
+	ptsMiners := make(plotter.XYs, *days)
 	for i := 0; i < MINERS; i++ {
 		mSlice = append(mSlice, &miners[i])
 		actors = append(actors, &miners[i])
 	}
 
+	// Setup Plot
+	p, err := plot.New()
+	if err != nil {
+		panic(err)
+	}
+
+	p.Title.Text = "PADCoin Simulation"
+	p.X.Label.Text = "Step"
+
+	p.Y.Scale = plot.LogScale{}
+	p.Y.Label.Text = "Average Wallet Value"
+
 	// Simulation
 	for i := 0; i < *days; i++ {
+
 		minedTransactions, cardsBought, fakesFound, fakesVerified = 0, 0, 0, 0
 		for a := 0; a < len(actors); a++ {
 			actors[a].Step(int64(i))
 		}
+
+		ptsExchange[i].X = float64(i)
+		ptsExchange[i].Y = math.Max(float64(exchange.Wallet), 1e-10)
+
+		ptsGovernment[i].X = float64(i)
+		ptsGovernment[i].Y = math.Max(float64(goverment.Wallet), 1e-10)
+
+		ptsCardManufacturers[i].X = float64(i)
+		ptsCardManufacturers[i].Y = math.Max(float64(AverageWallet(cmSlice)), 1e-10)
+
+		ptsDrugManufacturers[i].X = float64(i)
+		ptsDrugManufacturers[i].Y = math.Max(float64(AverageWallet(dmSlice)), 1e-10)
+
+		ptsAgents[i].X = float64(i)
+		ptsAgents[i].Y = math.Max(float64(AverageWallet(aSlice)), 1e-10)
+
+		ptsLabs[i].X = float64(i)
+		ptsLabs[i].Y = math.Max(float64(AverageWallet(lSlice)), 1e-10)
+
+		ptsMiners[i].X = float64(i)
+		ptsMiners[i].Y = math.Max(float64(AverageWallet(mSlice)), 1e-10)
 
 		log.Println("Day:", i)
 		log.Println("Transactions Pending:", len(queue), "Mined:", minedTransactions)
@@ -395,7 +453,22 @@ func main(){
 		log.Println("Miner Average:", AverageWallet(mSlice))
 		log.Println()
 	}
-	
-	// Statistics
-	//for 
+
+	// Save the plot to a PNG file.
+	err = plotutil.AddLinePoints(p,
+		"Exchange", ptsExchange,
+		"Government", ptsGovernment,
+		fmt.Sprintf("Card Manufacturers (%d)", CARD_MANUFACTURERS), ptsCardManufacturers,
+		fmt.Sprintf("Drug Manufacturers (%d)", DRUG_MANUFACTURERS), ptsDrugManufacturers,
+		fmt.Sprintf("Agents (%d)", AGENTS), ptsAgents,
+		fmt.Sprintf("Labs (%d)", LABS), ptsLabs,
+		fmt.Sprintf("Miners (%d)", MINERS), ptsMiners,
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	if err := p.Save(12*vg.Inch, 12*vg.Inch, "points.png"); err != nil {
+		panic(err)
+	}
 }
